@@ -6,6 +6,16 @@ import os
 
 # --- ページ設定 ---
 st.set_page_config(page_title="URLから答えるBOT", page_icon="🌐", layout="wide")
+hide_menu_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_menu_style, unsafe_allow_html=True)
+
+# --- タイトル ---
 st.title("🌐 URLから答えるBOT")
 
 # --- 環境変数読み込み ---
@@ -13,10 +23,10 @@ load_dotenv()
 API_KEY = os.getenv("API_KEY")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={API_KEY}"
 
-# --- 固定URL（murakami.tax）---
+# --- ターゲットURL ---
 TARGET_URL = "https://murakami.tax/"
 
-# --- URLからテキスト抽出 ---
+# --- URLからテキスト取得 ---
 def fetch_text_from_url(url):
     try:
         res = requests.get(url, timeout=10)
@@ -25,7 +35,7 @@ def fetch_text_from_url(url):
     except Exception as e:
         return f"❌ URLの読み込みエラー: {e}"
 
-# --- Geminiで回答生成 ---
+# --- Geminiに質問 ---
 def ask_gemini(text, question):
     prompt = f"""
 以下のWebページの内容を参考に、質問に対して「やさしい言葉」で説明してください。
@@ -47,18 +57,33 @@ def ask_gemini(text, question):
     else:
         return f"❌ エラー: {res.status_code} - {res.text}"
 
-# --- Webページテキスト取得 ---
+# --- ページ状態管理 ---
+if "question" not in st.session_state:
+    st.session_state.question = ""
+if "answer" not in st.session_state:
+    st.session_state.answer = ""
+
+# --- 入力フォーム ---
+with st.form("question_form"):
+    st.session_state.question = st.text_input("質問を入力してください", value=st.session_state.question)
+    submitted = st.form_submit_button("💬 質問する")
+
+# --- URLからテキスト取得 ---
 text = fetch_text_from_url(TARGET_URL)
 
-if "❌" in text:
-    st.error(text)
-else:
-    # --- 入力フォーム ---
-    with st.form("form"):
-        question = st.text_input("質問を入力してください")
-        submitted = st.form_submit_button("💬 質問する")
-        if submitted and question:
-            with st.spinner("⌛ やさしい回答を準備中..."):
-                answer = ask_gemini(text, question)
-                st.markdown("### 回答：")
-                st.write(answer)
+# --- 回答生成処理 ---
+if submitted and st.session_state.question:
+    with st.spinner("⌛ 回答を準備しています..."):
+        st.session_state.answer = ask_gemini(text, st.session_state.question)
+
+# --- 回答表示 ---
+if st.session_state.answer:
+    st.markdown("### 回答：")
+    st.write(st.session_state.answer)
+
+# --- ボタン群 ---
+col1, col2 = st.columns([1, 1])
+with col1:
+    if st.button("🧹 回答クリア"):
+        st.session_state.answer = ""
+        st.session_state.question = ""
