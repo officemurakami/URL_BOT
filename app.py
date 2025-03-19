@@ -1,39 +1,69 @@
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urljoin, urlparse
 from dotenv import load_dotenv
 import os
 
-# --- ページ設定（タイトル変更） ---
+# --- ページ設定 ---
 st.set_page_config(page_title="村上事務所についてのBOT", page_icon="🏢", layout="wide")
-hide_menu_style = """
+st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     </style>
-"""
-st.markdown(hide_menu_style, unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-# --- タイトル表示 ---
 st.title("🏢 村上事務所についてのBOT")
 
-# --- 環境変数読み込み ---
+# --- 環境変数 ---
 load_dotenv()
 API_KEY = os.getenv("API_KEY")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key={API_KEY}"
 
 # --- 対象URL ---
-TARGET_URL = "https://murakami.tax/"
+BASE_URL = "https://murakami.tax/"
 
-# --- URLからテキスト取得 ---
-def fetch_text_from_url(url):
+# --- サイト内リンク取得 ---
+def get_all_links(url, base_domain):
     try:
         res = requests.get(url, timeout=10)
         soup = BeautifulSoup(res.text, "html.parser")
-        return soup.get_text()
+        links = set()
+        for a in soup.find_all("a", href=True):
+            link = urljoin(url, a["href"])
+            parsed = urlparse(link)
+            if parsed.netloc == base_domain:
+                clean_link = parsed.scheme + "://" + parsed.netloc + parsed.path
+                links.add(clean_link)
+        return links
     except Exception as e:
-        return f"❌ URLの読み込みエラー: {e}"
+        return set()
+
+# --- 全ページのテキスト取得（再帰） ---
+def crawl_site_texts(base_url, max_depth=2):
+    visited = set()
+    to_visit = {base_url}
+    base_domain = urlparse(base_url).netloc
+    all_text = ""
+
+    for depth in range(max_depth):
+        next_visit = set()
+        for url in to_visit:
+            if url in visited:
+                continue
+            try:
+                res = requests.get(url, timeout=10)
+                soup = BeautifulSoup(res.text, "html.parser")
+                page_text = soup.get_text(separator=" ", strip=True)
+                all_text += page_text + "\n\n"
+                visited.add(url)
+                next_visit.update(get_all_links(url, base_domain))
+            except Exception:
+                continue
+        to_visit = next_visit - visited
+    return all_text
 
 # --- Geminiへの質問 ---
 def ask_gemini(text, question):
@@ -43,7 +73,7 @@ def ask_gemini(text, question):
 ・専門用語はできるだけ使わず、わかりやすい表現にしてください。
 
 【Webサイトの内容】
-{text[:4000]}
+{text[:12000]}
 
 【質問】
 {question}
@@ -55,24 +85,25 @@ def ask_gemini(text, question):
     else:
         return f"❌ エラー: {res.status_code} - {res.text}"
 
-# --- 状態管理 ---
+# --- セッション管理 ---
 if "question" not in st.session_state:
     st.session_state.question = ""
 if "answer" not in st.session_state:
     st.session_state.answer = ""
 
-# --- 入力フォーム ---
+# --- フォーム ---
 with st.form("qa_form"):
     st.session_state.question = st.text_input("質問を入力してください", value=st.session_state.question)
     submitted = st.form_submit_button("💬 質問する")
 
-# --- 本文取得 ---
-text = fetch_text_from_url(TARGET_URL)
+# --- テキスト取得 ---
+with st.spinner("🔍 サイト全体を読み込んでいます..."):
+    site_text = crawl_site_texts(BASE_URL)
 
-# --- 回答処理 ---
+# --- 回答 ---
 if submitted and st.session_state.question:
     with st.spinner("⌛ 回答を準備しています..."):
-        st.session_state.answer = ask_gemini(text, st.session_state.question)
+        st.session_state.answer = ask_gemini(site_text, st.session_state.question)
 
 # --- 表示 ---
 if st.session_state.answer:
